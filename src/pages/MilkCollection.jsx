@@ -10,6 +10,7 @@ import { QRScanner } from '../components/QRScanner'
 import { WeightDisplay } from '../components/WeightDisplay'
 import { EmptyState } from '../components/EmptyState'
 import { compressImageFileToDataUrl } from '../utils/imageCompress.js'
+import { suggestReadingFromScaleImage } from '../utils/scaleReadingOcr.js'
 
 function deriveSession() {
   const h = new Date().getHours()
@@ -29,6 +30,7 @@ export function MilkCollection() {
   const [weightInput, setWeightInput] = useState('')
   const [scalePhotoDataUrl, setScalePhotoDataUrl] = useState(null)
   const [photoBusy, setPhotoBusy] = useState(false)
+  const [ocrBusy, setOcrBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [scanIndex, setScanIndex] = useState(0)
 
@@ -73,15 +75,34 @@ export function MilkCollection() {
       toast.error('Scan a farmer QR first')
       return
     }
+    let dataUrl
     setPhotoBusy(true)
     try {
-      const dataUrl = await compressImageFileToDataUrl(file)
+      dataUrl = await compressImageFileToDataUrl(file)
       setScalePhotoDataUrl(dataUrl)
-      toast.success('Weighing machine photo captured')
+      toast.success('Photo captured — detecting reading from display…')
     } catch (err) {
       toast.error(err?.message || 'Could not use that image')
+      return
     } finally {
       setPhotoBusy(false)
+    }
+
+    if (!dataUrl) return
+
+    setOcrBusy(true)
+    try {
+      const suggested = await suggestReadingFromScaleImage(dataUrl)
+      if (suggested != null && Number.isFinite(suggested)) {
+        setWeightInput(String(suggested))
+        toast.success(`Filled ${suggested} from photo — confirm units (L) before save`)
+      } else {
+        toast('Could not read digits from the photo — enter liters manually', { icon: 'ℹ️' })
+      }
+    } catch {
+      toast('Could not read digits from the photo — enter liters manually', { icon: 'ℹ️' })
+    } finally {
+      setOcrBusy(false)
     }
   }
 
@@ -212,7 +233,7 @@ export function MilkCollection() {
           <Card hover>
             <CardHeader
               title="Weighing machine"
-              subtitle="Take a photo of the scale display for your records (optional)."
+              subtitle="Photo is optional. After capture we try to read digits from the display and fill liters below (verify — LED fonts can misread)."
             />
             <input
               ref={scalePhotoInputRef}
@@ -227,8 +248,8 @@ export function MilkCollection() {
                 type="button"
                 variant="secondary"
                 className="sm:max-w-xs"
-                disabled={!selected || photoBusy}
-                loading={photoBusy}
+                disabled={!selected || photoBusy || ocrBusy}
+                loading={photoBusy || ocrBusy}
                 onClick={() => scalePhotoInputRef.current?.click()}
               >
                 <Camera className="h-4 w-4" />
@@ -270,7 +291,7 @@ export function MilkCollection() {
             value={weightInput}
             onChange={(e) => setWeightInput(e.target.value)}
             disabled={!selected}
-            hint="Read from the machine after you photograph it, or enter from memory."
+            hint="Auto-filled from the photo when possible; always confirm (e.g. scale may show kg while you store liters)."
           />
 
           <WeightDisplay liters={Number.isFinite(weightNum) && weightNum > 0 ? weightNum : 0} />

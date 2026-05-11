@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { Plus, Search, RefreshCw, Trash2 } from 'lucide-react'
+import { collectionsApi } from '../services/api'
+import { formatDate, formatTime } from '../utils/format'
 import { useData } from '../context/DataContext'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
@@ -19,6 +21,38 @@ export function Farmers() {
   const [addOpen, setAddOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form, setForm] = useState({ name: '', mobile: '', village: '', status: 'active' })
+
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyFarmer, setHistoryFarmer] = useState(null)
+  const [historyRows, setHistoryRows] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyTotal, setHistoryTotal] = useState(0)
+
+  async function openFarmerHistory(farmer) {
+    setHistoryFarmer(farmer)
+    setHistoryOpen(true)
+    setHistoryLoading(true)
+    setHistoryRows([])
+    setHistoryTotal(0)
+    try {
+      const { items, meta } = await collectionsApi.farmerHistory(farmer.id, { limit: 100, page: 1 })
+      setHistoryRows(items ?? [])
+      setHistoryTotal(meta?.total ?? items?.length ?? 0)
+    } catch (err) {
+      toast.error(err.message || 'Failed to load collection history')
+      setHistoryOpen(false)
+      setHistoryFarmer(null)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  function closeFarmerHistory() {
+    setHistoryOpen(false)
+    setHistoryFarmer(null)
+    setHistoryRows([])
+    setHistoryTotal(0)
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -114,7 +148,14 @@ export function Farmers() {
             action={<Button type="button" variant="outline" onClick={() => setQuery('')}>Clear search</Button>}
           />
         ) : (
-          filtered.map((f) => <FarmerCard key={f.id} farmer={f} onClick={() => setDetail(f)} />)
+          filtered.map((f) => (
+            <FarmerCard
+              key={f.id}
+              farmer={f}
+              onViewProfile={() => setDetail(f)}
+              onShowHistory={() => openFarmerHistory(f)}
+            />
+          ))
         )}
       </div>
 
@@ -151,9 +192,12 @@ export function Farmers() {
                     </span>
                   </TD>
                   <TD className="text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <Button type="button" variant="outline" size="sm" onClick={() => setDetail(f)}>
                         View
+                      </Button>
+                      <Button type="button" variant="secondary" size="sm" onClick={() => openFarmerHistory(f)}>
+                        Show detailed
                       </Button>
                       <Button type="button" variant="danger" size="sm" onClick={() => handleDelete(f)}>
                         <Trash2 className="h-3.5 w-3.5" />
@@ -193,6 +237,18 @@ export function Farmers() {
                 {detail.qrCode || detail.farmerCode || detail.id}
               </p>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                const f = detail
+                setDetail(null)
+                openFarmerHistory(f)
+              }}
+            >
+              Show detailed — milk collections
+            </Button>
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -215,6 +271,66 @@ export function Farmers() {
       </Modal>
 
       {/* Add farmer modal */}
+      <Modal open={historyOpen} onClose={closeFarmerHistory} title={historyFarmer ? `Milk collections — ${historyFarmer.name}` : 'Milk collections'} size="lg">
+        {historyFarmer ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Code <span className="font-mono text-xs text-slate-800 dark:text-slate-200">{historyFarmer.farmerCode}</span>
+              {' · '}
+              {historyTotal} record{historyTotal === 1 ? '' : 's'}
+            </p>
+            {historyLoading ? (
+              <p className="py-8 text-center text-sm text-slate-500">Loading collection history…</p>
+            ) : historyRows.length === 0 ? (
+              <EmptyState
+                title="No collections yet"
+                description="When this farmer’s milk is recorded on Milk collection, entries appear here with date, time, and liters."
+              />
+            ) : (
+              <div className="max-h-[min(60vh,480px)] overflow-auto rounded-xl border border-slate-200/80 dark:border-slate-700">
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Date</TH>
+                      <TH>Time</TH>
+                      <TH>Liters</TH>
+                      <TH>Session</TH>
+                      <TH>Scale photo</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {historyRows.map((row) => (
+                      <TR key={row.id}>
+                        <TD>{formatDate(row.collectedAt || row.createdAt)}</TD>
+                        <TD>{formatTime(row.collectedAt || row.createdAt)}</TD>
+                        <TD className="font-mono">{Number(row.weight).toFixed(2)} L</TD>
+                        <TD>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              row.session === 'Morning'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200'
+                                : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200'
+                            }`}
+                          >
+                            {row.session}
+                          </span>
+                        </TD>
+                        <TD className="text-slate-600 dark:text-slate-300">
+                          {row.hasScalePhoto ? 'Yes' : '—'}
+                        </TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </div>
+            )}
+            <Button type="button" variant="secondary" className="w-full" onClick={closeFarmerHistory}>
+              Close
+            </Button>
+          </div>
+        ) : null}
+      </Modal>
+
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add farmer" size="md">
         <form className="space-y-4" onSubmit={handleAdd}>
           <Input

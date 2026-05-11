@@ -27,7 +27,7 @@ export function WeightDisplay({ liters, label = 'Net volume', unit = 'L' }) {
         <span className="text-2xl font-semibold text-emerald-600 dark:text-emerald-400">{unit}</span>
       </div>
       <p className="relative mt-3 text-xs text-slate-500 dark:text-slate-400">
-        Enter liters read from the weighing machine (after capturing a photo if needed).
+        Updates when you type liters or when a scale photo is read successfully.
       </p>
     </div>
   )
