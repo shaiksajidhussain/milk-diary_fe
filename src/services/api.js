@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api'
+// const BASE_URL =  'http://localhost:4000/api'
+const BASE_URL = 'https://milk-diary-be.vercel.app/api'
 
 export const api = axios.create({
   baseURL: BASE_URL,
