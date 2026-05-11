@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { Download, Search, SlidersHorizontal, RefreshCw } from 'lucide-react'
+import { Download, Image as ImageIcon, Search, SlidersHorizontal, RefreshCw } from 'lucide-react'
 import { collectionsApi } from '../services/api'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Table, THead, TBody, TR, TH, TD } from '../components/ui/Table'
 import { EmptyState } from '../components/EmptyState'
+import { Modal } from '../components/ui/Modal'
 import { SkeletonCard } from '../components/Skeleton'
 import { formatDate, formatTime } from '../utils/format'
 
@@ -20,6 +21,8 @@ export function CollectionHistory() {
   const [query, setQuery] = useState('')
   const [session, setSession] = useState('all')
   const [page, setPage] = useState(1)
+  const [photoModal, setPhotoModal] = useState({ open: false, src: null, title: '' })
+  const [photoLoadingId, setPhotoLoadingId] = useState(null)
 
   // Fetch from API with server-side pagination + session filter
   useEffect(() => {
@@ -70,8 +73,53 @@ export function CollectionHistory() {
     toast.success('Export — connect CSV endpoint when backend is extended')
   }
 
+  async function openScalePhoto(row) {
+    if (!row?.hasScalePhoto) return
+    setPhotoLoadingId(row.id)
+    setPhotoModal({
+      open: true,
+      src: null,
+      title: `Weighing machine — ${row.farmer?.name || 'Farmer'}`,
+    })
+    try {
+      const full = await collectionsApi.getById(row.id)
+      const src = full.scalePhotoDataUrl
+      if (!src) {
+        toast.error('Photo not available')
+        setPhotoModal({ open: false, src: null, title: '' })
+        return
+      }
+      setPhotoModal({
+        open: true,
+        src,
+        title: `Weighing machine — ${full.farmer?.name || row.farmer?.name || 'Farmer'}`,
+      })
+    } catch (err) {
+      toast.error(err.message || 'Could not load photo')
+      setPhotoModal({ open: false, src: null, title: '' })
+    } finally {
+      setPhotoLoadingId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
+      <Modal
+        open={photoModal.open}
+        onClose={() => setPhotoModal({ open: false, src: null, title: '' })}
+        title={photoModal.title}
+        size="lg"
+      >
+        {photoModal.src ? (
+          <img
+            src={photoModal.src}
+            alt="Weighing machine capture"
+            className="w-full max-h-[70vh] rounded-xl object-contain"
+          />
+        ) : (
+          <p className="text-sm text-slate-600 dark:text-slate-400">Loading image…</p>
+        )}
+      </Modal>
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
@@ -137,6 +185,7 @@ export function CollectionHistory() {
               <TH>Date</TH>
               <TH>Time</TH>
               <TH>Weight</TH>
+              <TH>Scale photo</TH>
               <TH>Session</TH>
               <TH>Status</TH>
             </TR>
@@ -153,6 +202,22 @@ export function CollectionHistory() {
                 <TD>{formatDate(row.collectedAt || row.createdAt)}</TD>
                 <TD>{formatTime(row.collectedAt || row.createdAt)}</TD>
                 <TD className="font-mono">{Number(row.weight).toFixed(2)} L</TD>
+                <TD>
+                  {row.hasScalePhoto ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      loading={photoLoadingId === row.id}
+                      onClick={() => openScalePhoto(row)}
+                    >
+                      <ImageIcon className="h-4 w-4" />
+                      View
+                    </Button>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </TD>
                 <TD>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${row.session === 'Morning' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200' : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200'}`}>
                     {row.session}

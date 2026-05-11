@@ -144,6 +144,7 @@ export function DataProvider({ children }) {
       weight: entry.weight,
       session: entry.session,
       collectedAt: entry.collectedAt,
+      ...(entry.scalePhotoDataUrl ? { scalePhotoDataUrl: entry.scalePhotoDataUrl } : {}),
     })
     setCollections((prev) => [created, ...prev])
     // refresh dashboard stats after a new collection

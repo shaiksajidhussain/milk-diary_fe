@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Plus, Search, QrCode, RefreshCw, Trash2 } from 'lucide-react'
+import { Plus, Search, RefreshCw, Trash2 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
@@ -9,6 +9,7 @@ import { Table, THead, TBody, TR, TH, TD } from '../components/ui/Table'
 import { FarmerCard } from '../components/FarmerCard'
 import { EmptyState } from '../components/EmptyState'
 import { SkeletonCard } from '../components/Skeleton'
+import { QrCodeImage } from '../components/QrCodeImage'
 
 export function Farmers() {
   const { farmers, farmersLoading, addFarmer, updateFarmer, removeFarmer, fetchFarmers } = useData()
@@ -180,10 +181,16 @@ export function Farmers() {
               </div>
             </div>
             <div className="rounded-2xl border border-dashed border-emerald-400/50 bg-white/80 p-6 text-center dark:bg-slate-900/40">
-              <QrCode className="mx-auto h-16 w-16 text-emerald-700 dark:text-emerald-300" />
-              <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-500">QR payload</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Scan this code</p>
+              <div className="mt-3 flex justify-center">
+                <QrCodeImage
+                  value={detail.qrCode || detail.farmerCode || detail.id}
+                  size={200}
+                />
+              </div>
+              <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-500">Encoded payload</p>
               <p className="mt-1 break-all font-mono text-xs text-slate-600 dark:text-slate-300">
-                {detail.qrCode || detail.qrPayload || detail.farmerCode}
+                {detail.qrCode || detail.farmerCode || detail.id}
               </p>
             </div>
             <div className="flex gap-2">

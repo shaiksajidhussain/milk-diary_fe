@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Camera, CameraOff, QrCode, ScanLine } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -12,11 +12,19 @@ export function QRScanner({
   disabled,
   demoDisabled,
   demoLoading = false,
+  listLoading = false,
 }) {
   const uid = useId().replace(/:/g, '')
   const readerId = `qr-reader-${uid}`
   const scannerRef = useRef(null)
   const decodedOnceRef = useRef(false)
+  /** html5-qrcode keeps the decode callback forever — must read latest farmers / handler from refs */
+  const farmersRef = useRef(farmers)
+  const onFarmerMatchedRef = useRef(onFarmerMatched)
+  useLayoutEffect(() => {
+    farmersRef.current = farmers
+    onFarmerMatchedRef.current = onFarmerMatched
+  }, [farmers, onFarmerMatched])
 
   const [cameraOn, setCameraOn] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -55,6 +63,10 @@ export function QRScanner({
   }, [])
 
   const startCamera = async () => {
+    if (listLoading) {
+      toast.error('Loading farmers — try again in a second')
+      return
+    }
     if (disabled) {
       toast.error('Add or load farmers first')
       return
@@ -92,9 +104,14 @@ export function QRScanner({
         },
         async (decodedText) => {
           if (decodedOnceRef.current) return
-          const farmer = findFarmerByQrText(farmers, decodedText)
+          const list = farmersRef.current
+          const farmer = findFarmerByQrText(list, decodedText)
           if (!farmer) {
-            toast.error(`No farmer for QR: ${decodedText}`)
+            toast.error(
+              list?.length
+                ? `No farmer for: "${decodedText.slice(0, 80)}${decodedText.length > 80 ? '…' : ''}"`
+                : 'Farmers list not loaded yet — wait a moment and try again',
+            )
             return
           }
           if (farmer.status !== 'active') {
@@ -103,7 +120,7 @@ export function QRScanner({
           }
           decodedOnceRef.current = true
           await stopCamera()
-          onFarmerMatched(farmer)
+          onFarmerMatchedRef.current(farmer)
           toast.success(`Matched — ${farmer.name}`)
         },
         () => {},
@@ -148,8 +165,8 @@ export function QRScanner({
         <div>
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">QR scanner</h3>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Use the device camera to read the farmer card QR. Codes match <span className="font-mono">FARMER-…</span> or{' '}
-            <span className="font-mono">FR-…</span> from your database.
+            Point at the farmer profile QR. A match fills the <span className="font-semibold">Farmer details</span> panel on
+            this page. Payloads look like <span className="font-mono">FARMER-…</span> or <span className="font-mono">FR-…</span>.
           </p>
         </div>
 
