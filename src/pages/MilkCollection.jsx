@@ -5,7 +5,7 @@ import { Gauge, Save, UserCircle2 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
-import { QRScannerMock } from '../components/QRScannerMock'
+import { QRScanner } from '../components/QRScanner'
 import { WeightDisplay } from '../components/WeightDisplay'
 import { EmptyState } from '../components/EmptyState'
 
@@ -25,25 +25,33 @@ export function MilkCollection() {
     [farmers],
   )
 
-  const [scanning, setScanning] = useState(false)
+  const [demoScanning, setDemoScanning] = useState(false)
   const [selected, setSelected] = useState(null)
   const [weight, setWeight] = useState(null)
   const [saving, setSaving] = useState(false)
   const [scanIndex, setScanIndex] = useState(0)
 
-  async function handleScan() {
+  function handleFarmerFromQr(farmer) {
+    setWeight(null)
+    setSelected(farmer)
+  }
+
+  async function handleDemoScan() {
     if (activeFarmers.length === 0) {
       toast.error('No active farmers — add one first')
       return
     }
-    setScanning(true)
+    setDemoScanning(true)
     setWeight(null)
-    await new Promise((r) => setTimeout(r, 900))
-    const farmer = activeFarmers[scanIndex % activeFarmers.length]
-    setScanIndex((i) => i + 1)
-    setSelected(farmer)
-    setScanning(false)
-    toast.success(`QR matched — ${farmer.name}`)
+    try {
+      await new Promise((r) => setTimeout(r, 600))
+      const farmer = activeFarmers[scanIndex % activeFarmers.length]
+      setScanIndex((i) => i + 1)
+      setSelected(farmer)
+      toast.success(`Demo: ${farmer.name}`)
+    } finally {
+      setDemoScanning(false)
+    }
   }
 
   function handleCaptureWeight() {
@@ -86,15 +94,18 @@ export function MilkCollection() {
           Milk collection
         </h1>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-          Scan farmer QR → capture weight → save to database.
+          Camera QR scan or demo scan → capture weight → save to database.
         </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <QRScannerMock
-          onScan={handleScan}
-          scanning={scanning}
-          disabled={activeFarmers.length === 0}
+        <QRScanner
+          farmers={farmers}
+          onFarmerMatched={handleFarmerFromQr}
+          onDemoScan={handleDemoScan}
+          disabled={farmers.length === 0}
+          demoDisabled={activeFarmers.length === 0}
+          demoLoading={demoScanning}
         />
 
         <div className="space-y-4">
@@ -103,7 +114,7 @@ export function MilkCollection() {
             {!selected ? (
               <EmptyState
                 title="Waiting for scan"
-                description="Use Scan QR to load a farmer profile into this lane."
+                description="Start the camera and point at a farmer QR, or use Demo scan."
               />
             ) : (
               <motion.div
