@@ -76,3 +76,9 @@ export const collectionsApi = {
       .get(`/collections/farmer/${farmerId}`, { params })
       .then((r) => ({ items: r.data.data?.items ?? r.data.data, meta: r.data.meta })),
 }
+
+// ---------- OCR ----------
+export const ocrApi = {
+  readScaleFromImage: (scalePhotoDataUrl) =>
+    api.post('/ocr/scale-read', { scalePhotoDataUrl }).then((r) => r.data.data),
+}

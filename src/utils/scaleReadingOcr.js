@@ -6,43 +6,72 @@ export function extractScaleNumberFromOcrText(text) {
   const raw = String(text || '')
   const compact = raw.replace(/\s+/g, '')
   const sources = [raw, compact, raw.replace(/[^\d.,]/g, '')]
+  const MAX_PLAUSIBLE_DIRECT_INT = 200
 
-  const candidates = []
-  const push = (n) => {
-    if (Number.isFinite(n) && n > 0 && n <= 99999) candidates.push(n)
+  const decimalCandidates = []
+  const integerCandidates = []
+
+  const pushDecimal = (n) => {
+    if (Number.isFinite(n) && n > 0 && n <= 99999) decimalCandidates.push(n)
+  }
+
+  const pushInteger = (n) => {
+    if (Number.isFinite(n) && n > 0 && n <= 99999) integerCandidates.push(n)
+  }
+
+  const voteBest = (nums, digits = 2) => {
+    const buckets = new Map()
+    for (const n of nums) {
+      const key = n.toFixed(digits)
+      const b = buckets.get(key) || { count: 0, value: n }
+      b.count += 1
+      b.value = n
+      buckets.set(key, b)
+    }
+    if (!buckets.size) return null
+    return [...buckets.values()]
+      .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.value - b.value))[0]
+      .value
   }
 
   for (const s of sources) {
     for (const m of s.matchAll(/(\d{1,4})\s*[.,:]\s*(\d{1,3})/g)) {
-      push(parseFloat(`${m[1]}.${m[2]}`))
+      const frac = m[2].slice(0, 2).padEnd(2, '0')
+      pushDecimal(parseFloat(`${m[1]}.${frac}`))
     }
     // OCR often drops the dot: "65 00" or "65 0"
     for (const m of s.matchAll(/\b(\d{1,4})\s+(\d{2})\b/g)) {
-      push(parseFloat(`${m[1]}.${m[2]}`))
+      pushDecimal(parseFloat(`${m[1]}.${m[2]}`))
     }
     for (const m of s.matchAll(/(\d{1,4}\.\d{1,3})/g)) {
-      push(parseFloat(m[1]))
+      pushDecimal(parseFloat(m[1]))
     }
     for (const m of s.matchAll(/(\d{1,4},\d{1,3})/g)) {
-      push(parseFloat(m[1].replace(',', '.')))
+      pushDecimal(parseFloat(m[1].replace(',', '.')))
     }
     for (const m of s.matchAll(/(?:^|[^\d.])(\d{4,5})(?:[^\d.]|$)/g)) {
       const n = parseInt(m[1], 10)
-      if (n >= 1000 && n <= 99999) push(n / 100)
+      if (n >= 1000 && n <= 99999) pushDecimal(n / 100)
+    }
+    for (const m of s.matchAll(/(?:^|[^\d.])(\d{2,4})(?:[^\d.]|$)/g)) {
+      pushInteger(parseInt(m[1], 10))
     }
   }
 
-  if (candidates.length) {
-    const decimals = candidates.filter((n) => Math.abs(n - Math.round(n)) > 1e-6)
-    const pool = decimals.length ? decimals : candidates
-    return Math.max(...pool)
+  if (decimalCandidates.length) {
+    return voteBest(decimalCandidates, 2)
   }
 
   const ints = [...compact.matchAll(/(\d{2,4})/g)].map((m) => parseInt(m[1], 10))
   const ok = ints.filter((n) => n >= 1000 && n <= 99999)
-  if (ok.length) return Math.max(...ok) / 100
-  const small = ints.filter((n) => n >= 10 && n <= 999)
-  return small.length ? Math.max(...small) : null
+  if (ok.length) return voteBest(ok.map((n) => n / 100), 2)
+  const small = integerCandidates.filter((n) => n >= 10 && n <= 999)
+  if (!small.length) return null
+
+  // Safety: for LED scales, plain integer OCR (without decimal clues) is noisy.
+  // Reject large values like 500 when no decimal-like token was seen.
+  const safeSmall = small.filter((n) => n <= MAX_PLAUSIBLE_DIRECT_INT)
+  return safeSmall.length ? voteBest(safeSmall, 0) : null
 }
 
 /**
@@ -60,8 +89,71 @@ function buildOcrImageVariants(dataUrl) {
           return
         }
 
+        const detectLedDisplayBox = () => {
+          const dw = Math.max(160, Math.min(640, w0))
+          const dh = Math.max(120, Math.round((h0 * dw) / w0))
+          const c = document.createElement('canvas')
+          c.width = dw
+          c.height = dh
+          const cx = c.getContext('2d')
+          if (!cx) return null
+          cx.drawImage(img, 0, 0, dw, dh)
+          const { data } = cx.getImageData(0, 0, dw, dh)
+
+          let minX = dw
+          let minY = dh
+          let maxX = -1
+          let maxY = -1
+          let hits = 0
+
+          for (let y = 0; y < dh; y++) {
+            for (let x = 0; x < dw; x++) {
+              const i = (y * dw + x) * 4
+              const r = data[i]
+              const g = data[i + 1]
+              const b = data[i + 2]
+              const isLedGreen =
+                g > 70 &&
+                g > r * 1.15 &&
+                g > b * 1.1 &&
+                g - r > 18 &&
+                g - b > 12
+              if (!isLedGreen) continue
+              hits++
+              if (x < minX) minX = x
+              if (y < minY) minY = y
+              if (x > maxX) maxX = x
+              if (y > maxY) maxY = y
+            }
+          }
+
+          if (hits < 120 || maxX <= minX || maxY <= minY) return null
+
+          const boxW = maxX - minX + 1
+          const boxH = maxY - minY + 1
+          if (boxW < 20 || boxH < 10) return null
+
+          const padX = Math.round(boxW * 0.7)
+          const padY = Math.round(boxH * 0.9)
+          const sx = Math.max(0, minX - padX)
+          const sy = Math.max(0, minY - padY)
+          const ex = Math.min(dw - 1, maxX + padX)
+          const ey = Math.min(dh - 1, maxY + padY)
+          const sw = Math.max(24, ex - sx + 1)
+          const sh = Math.max(18, ey - sy + 1)
+
+          return {
+            sx: (sx / dw) * w0,
+            sy: (sy / dh) * h0,
+            sw: (sw / dw) * w0,
+            sh: (sh / dh) * h0,
+            label: 'led-auto',
+          }
+        }
+
+        const ledTarget = detectLedDisplayBox()
         const targets = [
-          { sx: 0, sy: 0, sw: w0, sh: h0, label: 'full' },
+          ...(ledTarget ? [ledTarget] : []),
           {
             sx: w0 * 0.2,
             sy: h0 * 0.15,
@@ -69,6 +161,7 @@ function buildOcrImageVariants(dataUrl) {
             sh: h0 * 0.45,
             label: 'crop',
           },
+          { sx: 0, sy: 0, sw: w0, sh: h0, label: 'full' },
         ]
 
         const scale = Math.min(3.5, Math.max(2, 900 / Math.min(w0, h0)))
@@ -192,10 +285,14 @@ export async function suggestReadingFromScaleImage(dataUrl) {
           data: { text },
         } = await worker.recognize(url)
         collected.push(text)
-        // Fast path when a pass clearly sees a decimal display (e.g. 65.00)
-        if (/\d{1,3}\s*[.,:]\s*\d{1,3}/.test(text) || /\d{1,3}\.\d{2}\b/.test(text)) {
+        // Fast path only when the OCR strongly resembles scale decimals (e.g. 65.00 or 6500).
+        if (
+          /\d{1,3}\s*[.,:]\s*\d{2}\b/.test(text) ||
+          /\b\d{4,5}\b/.test(text) ||
+          /\b\d{2}\s+\d{2}\b/.test(text)
+        ) {
           const quick = extractScaleNumberFromOcrText(text)
-          if (quick != null && quick >= 0.01 && quick <= 99999) return quick
+          if (quick != null && quick >= 0.01 && quick <= 200) return quick
         }
       }
     }

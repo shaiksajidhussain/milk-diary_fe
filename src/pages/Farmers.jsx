@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Plus, Search, RefreshCw, Trash2 } from 'lucide-react'
+import { Image as ImageIcon, Plus, Search, RefreshCw, Trash2 } from 'lucide-react'
 import { collectionsApi } from '../services/api'
 import { formatDate, formatTime } from '../utils/format'
 import { useData } from '../context/DataContext'
@@ -27,6 +27,8 @@ export function Farmers() {
   const [historyRows, setHistoryRows] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyTotal, setHistoryTotal] = useState(0)
+  const [photoModal, setPhotoModal] = useState({ open: false, src: null, title: '' })
+  const [photoLoadingId, setPhotoLoadingId] = useState(null)
 
   async function openFarmerHistory(farmer) {
     setHistoryFarmer(farmer)
@@ -52,6 +54,35 @@ export function Farmers() {
     setHistoryFarmer(null)
     setHistoryRows([])
     setHistoryTotal(0)
+  }
+
+  async function openScalePhoto(row) {
+    if (!row?.hasScalePhoto) return
+    setPhotoLoadingId(row.id)
+    setPhotoModal({
+      open: true,
+      src: null,
+      title: `Weighing machine — ${historyFarmer?.name || 'Farmer'}`,
+    })
+    try {
+      const full = await collectionsApi.getById(row.id)
+      const src = full?.scalePhotoDataUrl
+      if (!src) {
+        toast.error('Photo not available')
+        setPhotoModal({ open: false, src: null, title: '' })
+        return
+      }
+      setPhotoModal({
+        open: true,
+        src,
+        title: `Weighing machine — ${full?.farmer?.name || historyFarmer?.name || 'Farmer'}`,
+      })
+    } catch (err) {
+      toast.error(err.message || 'Could not load photo')
+      setPhotoModal({ open: false, src: null, title: '' })
+    } finally {
+      setPhotoLoadingId(null)
+    }
   }
 
   const filtered = useMemo(() => {
@@ -271,6 +302,24 @@ export function Farmers() {
       </Modal>
 
       {/* Add farmer modal */}
+      <Modal
+        open={photoModal.open}
+        onClose={() => setPhotoModal({ open: false, src: null, title: '' })}
+        title={photoModal.title}
+        size="lg"
+      >
+        {photoModal.src ? (
+          <img
+            src={photoModal.src}
+            alt="Weighing machine capture"
+            className="w-full max-h-[70vh] rounded-xl object-contain"
+          />
+        ) : (
+          <p className="text-sm text-slate-600 dark:text-slate-400">Loading image…</p>
+        )}
+      </Modal>
+
+      {/* Add farmer modal */}
       <Modal open={historyOpen} onClose={closeFarmerHistory} title={historyFarmer ? `Milk collections — ${historyFarmer.name}` : 'Milk collections'} size="lg">
         {historyFarmer ? (
           <div className="space-y-3">
@@ -315,8 +364,21 @@ export function Farmers() {
                             {row.session}
                           </span>
                         </TD>
-                        <TD className="text-slate-600 dark:text-slate-300">
-                          {row.hasScalePhoto ? 'Yes' : '—'}
+                        <TD>
+                          {row.hasScalePhoto ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              loading={photoLoadingId === row.id}
+                              onClick={() => openScalePhoto(row)}
+                            >
+                              <ImageIcon className="h-4 w-4" />
+                              View
+                            </Button>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
                         </TD>
                       </TR>
                     ))}

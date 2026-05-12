@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { Camera, Save, Trash2, UserCircle2 } from 'lucide-react'
+import { Camera, CameraOff, ImagePlus, Save, Trash2, UserCircle2 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -11,6 +11,7 @@ import { WeightDisplay } from '../components/WeightDisplay'
 import { EmptyState } from '../components/EmptyState'
 import { compressImageFileToDataUrl } from '../utils/imageCompress.js'
 import { suggestReadingFromScaleImage } from '../utils/scaleReadingOcr.js'
+import { ocrApi } from '../services/api.js'
 
 function deriveSession() {
   const h = new Date().getHours()
@@ -24,13 +25,18 @@ export function MilkCollection() {
     [farmers],
   )
 
-  const scalePhotoInputRef = useRef(null)
+  const scalePhotoCameraInputRef = useRef(null)
+  const scalePhotoUploadInputRef = useRef(null)
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
   const [demoScanning, setDemoScanning] = useState(false)
   const [selected, setSelected] = useState(null)
   const [weightInput, setWeightInput] = useState('')
   const [scalePhotoDataUrl, setScalePhotoDataUrl] = useState(null)
   const [photoBusy, setPhotoBusy] = useState(false)
   const [ocrBusy, setOcrBusy] = useState(false)
+  const [cameraCaptureOpen, setCameraCaptureOpen] = useState(false)
+  const [cameraStarting, setCameraStarting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [scanIndex, setScanIndex] = useState(0)
 
@@ -48,6 +54,19 @@ export function MilkCollection() {
     resetSessionForm()
     setSelected(farmer)
   }
+
+  const stopCameraStream = () => {
+    const stream = streamRef.current
+    streamRef.current = null
+    if (!stream) return
+    for (const track of stream.getTracks()) track.stop()
+  }
+
+  useEffect(() => {
+    return () => {
+      stopCameraStream()
+    }
+  }, [])
 
   async function handleDemoScan() {
     if (activeFarmers.length === 0) {
@@ -67,35 +86,32 @@ export function MilkCollection() {
     }
   }
 
-  async function handleScalePhotoChange(e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (!selected) {
-      toast.error('Scan a farmer QR first')
-      return
-    }
-    let dataUrl
-    setPhotoBusy(true)
-    try {
-      dataUrl = await compressImageFileToDataUrl(file)
-      setScalePhotoDataUrl(dataUrl)
-      toast.success('Photo captured — detecting reading from display…')
-    } catch (err) {
-      toast.error(err?.message || 'Could not use that image')
-      return
-    } finally {
-      setPhotoBusy(false)
-    }
-
+  async function processScalePhotoDataUrl(dataUrl, sourceLabel = 'captured') {
     if (!dataUrl) return
-
+    setScalePhotoDataUrl(dataUrl)
+    toast.success(`Photo ${sourceLabel} — detecting reading from display…`)
     setOcrBusy(true)
     try {
-      const suggested = await suggestReadingFromScaleImage(dataUrl)
-      if (suggested != null && Number.isFinite(suggested)) {
-        setWeightInput(String(suggested))
-        toast.success(`Filled ${suggested} from photo — confirm units (L) before save`)
+      let aiSuggested = null
+      try {
+        const ai = await ocrApi.readScaleFromImage(dataUrl)
+        if (ai?.value != null && Number.isFinite(ai.value)) {
+          aiSuggested = ai.value
+        }
+      } catch {
+        /* fallback to local OCR */
+      }
+
+      if (aiSuggested != null) {
+        setWeightInput(String(aiSuggested))
+        toast.success(`Filled ${aiSuggested} from AI photo read — confirm units (L) before save`)
+        return
+      }
+
+      const localSuggested = await suggestReadingFromScaleImage(dataUrl)
+      if (localSuggested != null && Number.isFinite(localSuggested)) {
+        setWeightInput(String(localSuggested))
+        toast.success(`Filled ${localSuggested} from photo — confirm units (L) before save`)
       } else {
         toast('Could not read digits from the photo — enter liters manually', { icon: 'ℹ️' })
       }
@@ -104,6 +120,75 @@ export function MilkCollection() {
     } finally {
       setOcrBusy(false)
     }
+  }
+
+  async function handleScalePhotoChange(e, source = 'captured') {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!selected) {
+      toast.error('Scan a farmer QR first')
+      return
+    }
+    setPhotoBusy(true)
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file)
+      await processScalePhotoDataUrl(dataUrl, source)
+    } catch (err) {
+      toast.error(err?.message || 'Could not use that image')
+    } finally {
+      setPhotoBusy(false)
+    }
+  }
+
+  async function openCameraCapture() {
+    if (!selected || photoBusy || ocrBusy || cameraStarting) return
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      toast.error('Camera API is not available in this browser')
+      return
+    }
+    setCameraStarting(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      })
+      streamRef.current = stream
+      setCameraCaptureOpen(true)
+      requestAnimationFrame(() => {
+        if (videoRef.current) videoRef.current.srcObject = stream
+      })
+    } catch (err) {
+      toast.error(err?.message || 'Could not access camera. Check browser permissions.')
+      stopCameraStream()
+    } finally {
+      setCameraStarting(false)
+    }
+  }
+
+  function closeCameraCapture() {
+    setCameraCaptureOpen(false)
+    stopCameraStream()
+  }
+
+  async function handleTakeSnapshot() {
+    const video = videoRef.current
+    if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+      toast.error('Camera not ready yet')
+      return
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      toast.error('Could not capture image')
+      return
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+    closeCameraCapture()
+    await processScalePhotoDataUrl(dataUrl, 'captured')
   }
 
   async function handleSave() {
@@ -236,12 +321,19 @@ export function MilkCollection() {
               subtitle="Photo is optional. After capture we try to read digits from the display and fill liters below (verify — LED fonts can misread)."
             />
             <input
-              ref={scalePhotoInputRef}
+              ref={scalePhotoCameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
               className="hidden"
-              onChange={handleScalePhotoChange}
+              onChange={(e) => handleScalePhotoChange(e, 'captured')}
+            />
+            <input
+              ref={scalePhotoUploadInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handleScalePhotoChange(e, 'uploaded')}
             />
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Button
@@ -249,11 +341,21 @@ export function MilkCollection() {
                 variant="secondary"
                 className="sm:max-w-xs"
                 disabled={!selected || photoBusy || ocrBusy}
-                loading={photoBusy || ocrBusy}
-                onClick={() => scalePhotoInputRef.current?.click()}
+                loading={cameraStarting || photoBusy || ocrBusy}
+                onClick={openCameraCapture}
               >
                 <Camera className="h-4 w-4" />
-                Capture scale photo
+                Capture from camera
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="sm:max-w-xs"
+                disabled={!selected || photoBusy || ocrBusy}
+                onClick={() => scalePhotoUploadInputRef.current?.click()}
+              >
+                <ImagePlus className="h-4 w-4" />
+                Upload existing photo
               </Button>
               {scalePhotoDataUrl ? (
                 <Button
@@ -278,10 +380,34 @@ export function MilkCollection() {
               </div>
             ) : (
               <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                On phones, this opens the camera. On desktop, you can pick an image file.
+                Use camera for live capture, or upload an already saved scale image.
               </p>
             )}
           </Card>
+
+          {cameraCaptureOpen ? (
+            <Card hover>
+              <CardHeader
+                title="Camera capture"
+                subtitle="Take a live photo of the display, then we read digits automatically."
+              />
+              <div className="space-y-3">
+                <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-black dark:border-slate-700">
+                  <video ref={videoRef} autoPlay playsInline muted className="max-h-[360px] w-full object-contain" />
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button type="button" className="sm:max-w-xs" onClick={handleTakeSnapshot}>
+                    <Camera className="h-4 w-4" />
+                    Take photo
+                  </Button>
+                  <Button type="button" variant="outline" className="sm:max-w-xs" onClick={closeCameraCapture}>
+                    <CameraOff className="h-4 w-4" />
+                    Close camera
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ) : null}
 
           <Input
             label="Liters collected"
